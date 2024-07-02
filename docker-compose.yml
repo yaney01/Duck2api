@@ -2,7 +2,7 @@ version: '3'
 
 services:
   app:
-    image: ghcr.io/aurora-develop/duck2api:latest
+    image: ghcr.io/yaney01/Duck2api:latest
     container_name: duck2api
     restart: unless-stopped
     ports:
