@@ -47,7 +47,7 @@ func InitXVQD(client httpclient.AuroraHttpClient, proxyUrl string) (string, erro
 			return "", errors.New("no x-vqd-4 token")
 		}
 		Token.Token = token
-		Token.ExpireAt = time.Now().Add(time.Minute * 3)
+		Token.ExpireAt = time.Now().Add(time.Minute * 10)
 	}
 
 	return Token.Token, nil
@@ -87,23 +87,45 @@ func POSTconversation(client httpclient.AuroraHttpClient, request duckgotypes.Ap
 
 func Handle_request_error(c *gin.Context, response *http.Response) bool {
 	if response.StatusCode != 200 {
-		// Try read response body as JSON
-		var error_response map[string]interface{}
-		err := json.NewDecoder(response.Body).Decode(&error_response)
-		if err != nil {
-			// Read response body
+		// 特殊处理418错误
+		if response.StatusCode == 418 {
+			// 读取响应体
 			body, _ := io.ReadAll(response.Body)
 			c.JSON(response.StatusCode, gin.H{"error": gin.H{
-				"message": "Unknown error",
-				"type":    "internal_server_error",
+				"message": "DuckDuckGo API拒绝了请求，可能是由于请求过于频繁或IP被限制",
+				"type":    "418 I'm a teapot",
 				"param":   nil,
-				"code":    "500",
+				"code":    "error",
 				"details": string(body),
 			}})
 			return true
 		}
+		
+		// 尝试读取响应体为JSON
+		var error_response map[string]interface{}
+		// 先读取响应体
+		body, _ := io.ReadAll(response.Body)
+		// 尝试解析JSON
+		err := json.Unmarshal(body, &error_response)
+		if err != nil {
+			// 非JSON格式响应
+			c.JSON(response.StatusCode, gin.H{"error": gin.H{
+				"message": "API请求失败",
+				"type":    response.Status,
+				"param":   nil,
+				"code":    "error",
+				"details": string(body),
+			}})
+			return true
+		}
+		
+		// 处理JSON格式响应
+		message := "未知错误"
+		if detail, ok := error_response["detail"]; ok && detail != nil {
+			message = detail.(string)
+		}
 		c.JSON(response.StatusCode, gin.H{"error": gin.H{
-			"message": error_response["detail"],
+			"message": message,
 			"type":    response.Status,
 			"param":   nil,
 			"code":    "error",
