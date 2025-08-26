@@ -147,9 +147,84 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 - 尝试使用VPN或代理
 
 ### 4. 如果编译失败
-- 确保Go版本 >= 1.21
-- 运行 `go mod tidy` 清理依赖
-- 检查网络连接，确保能下载Go模块
+
+#### 常见编译错误及解决方案：
+
+**错误1**: `"fmt" imported and not used`
+```bash
+# 解决方案：删除未使用的导入（已修复）
+```
+
+**错误2**: `undefined: profiles.Chrome_131`
+```bash
+# 解决方案：使用兼容的Chrome profile（已修复为Chrome_120）
+```
+
+**错误3**: `cannot access './duck2api': No such file or directory`
+```bash
+# 原因：构建失败导致可执行文件未生成
+# 解决方案：
+
+# 方法1：使用修复脚本
+./fix-build.sh
+
+# 方法2：手动修复
+go clean -modcache
+go mod tidy
+go build -o duck2api
+chmod +x duck2api
+./duck2api
+
+# 方法3：使用改进的启动脚本
+./start.sh
+```
+
+**通用编译问题解决步骤**：
+1. 确保Go版本 >= 1.21：`go version`
+2. 清理模块缓存：`go clean -modcache`
+3. 重新整理依赖：`go mod tidy`
+4. 重新下载依赖：`go mod download`
+5. 检查网络连接，确保能下载Go模块
+6. 使用修复脚本：`./fix-build.sh`
+
+### 5. 环境特定问题
+
+#### ARM架构
+- 确保使用支持ARM的Go版本
+- 某些依赖包可能需要CGO，确保有合适的编译工具链
+
+#### 网络环境
+- 如果在中国大陆，可能需要设置GOPROXY：
+```bash
+export GOPROXY=https://goproxy.cn,direct
+export GOSUMDB=sum.golang.google.cn
+```
+
+#### 权限问题
+- 确保对项目目录有写权限
+- 如果使用sudo，注意Go环境变量传递
+
+### 6. 快速诊断命令
+
+```bash
+# 检查Go环境
+go version
+go env GOPATH
+go env GOPROXY
+
+# 检查依赖
+go mod verify
+go list -m all
+
+# 详细构建信息
+go build -v -x -o duck2api
+
+# 测试基本功能
+go run main.go &
+sleep 5
+curl http://localhost:8080/v1/models
+kill %1
+```
 
 ## 注意事项
 

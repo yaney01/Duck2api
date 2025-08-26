@@ -22,7 +22,7 @@ func NewStdClient() *TlsClient {
 		tls_client.WithCookieJar(tls_client.NewCookieJar()),
 		tls_client.WithRandomTLSExtensionOrder(),
 		tls_client.WithTimeoutSeconds(120),
-		tls_client.WithClientProfile(profiles.Chrome_131),
+		tls_client.WithClientProfile(profiles.Chrome_120),
 		tls_client.WithInsecureSkipVerify(),
 	}...)
 
