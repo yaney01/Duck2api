@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
@@ -18,8 +20,21 @@ import (
 
 var (
 	Token *XqdgToken
-	UA    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	UA    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	userAgents = []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	}
 )
+
+// 获取随机用户代理
+func getRandomUserAgent() string {
+	rand.Seed(time.Now().UnixNano())
+	return userAgents[rand.Intn(len(userAgents))]
+}
 
 type XqdgToken struct {
 	Token    string     `json:"token"`
@@ -37,17 +52,31 @@ func InitXVQD(client httpclient.AuroraHttpClient, proxyUrl string) (string, erro
 	Token.M.Lock()
 	defer Token.M.Unlock()
 	if Token.Token == "" || Token.ExpireAt.Before(time.Now()) {
-		status, err := postStatus(client, proxyUrl)
-		if err != nil {
-			return "", err
+		// 尝试最多3次获取token
+		var err error
+		for i := 0; i < 3; i++ {
+			var status *http.Response
+			status, err = postStatus(client, proxyUrl)
+			if err != nil {
+				if i == 2 { // 最后一次尝试
+					return "", err
+				}
+				time.Sleep(time.Duration(i+1) * time.Second) // 递增延迟
+				continue
+			}
+			defer status.Body.Close()
+			token := status.Header.Get("x-vqd-4")
+			if token == "" {
+				if i == 2 { // 最后一次尝试
+					return "", errors.New("no x-vqd-4 token found")
+				}
+				time.Sleep(time.Duration(i+1) * time.Second)
+				continue
+			}
+			Token.Token = token
+			Token.ExpireAt = time.Now().Add(time.Minute * 2) // 缩短到2分钟
+			break
 		}
-		defer status.Body.Close()
-		token := status.Header.Get("x-vqd-4")
-		if token == "" {
-			return "", errors.New("no x-vqd-4 token")
-		}
-		Token.Token = token
-		Token.ExpireAt = time.Now().Add(time.Minute * 3)
 	}
 
 	return Token.Token, nil
@@ -87,14 +116,42 @@ func POSTconversation(client httpclient.AuroraHttpClient, request duckgotypes.Ap
 
 func Handle_request_error(c *gin.Context, response *http.Response) bool {
 	if response.StatusCode != 200 {
-		// Try read response body as JSON
+		// 特殊状态码处理
+		switch response.StatusCode {
+		case 403:
+			c.JSON(403, gin.H{"error": gin.H{
+				"message": "Access forbidden. DuckDuckGo may have enhanced anti-bot detection. Try using a proxy or wait before retrying.",
+				"type":    "access_forbidden",
+				"param":   nil,
+				"code":    "403",
+			}})
+			return true
+		case 429:
+			c.JSON(429, gin.H{"error": gin.H{
+				"message": "Rate limited. Please wait before making another request.",
+				"type":    "rate_limit_exceeded",
+				"param":   nil,
+				"code":    "429",
+			}})
+			return true
+		case 502, 503, 504:
+			c.JSON(response.StatusCode, gin.H{"error": gin.H{
+				"message": "DuckDuckGo service temporarily unavailable. Please try again later.",
+				"type":    "service_unavailable",
+				"param":   nil,
+				"code":    "service_error",
+			}})
+			return true
+		}
+
+		// 尝试读取响应体作为JSON
 		var error_response map[string]interface{}
 		err := json.NewDecoder(response.Body).Decode(&error_response)
 		if err != nil {
-			// Read response body
+			// 读取响应体
 			body, _ := io.ReadAll(response.Body)
 			c.JSON(response.StatusCode, gin.H{"error": gin.H{
-				"message": "Unknown error",
+				"message": "Unknown error from DuckDuckGo",
 				"type":    "internal_server_error",
 				"param":   nil,
 				"code":    "500",
@@ -115,17 +172,23 @@ func Handle_request_error(c *gin.Context, response *http.Response) bool {
 
 func createHeader() httpclient.AuroraHeaders {
 	header := make(httpclient.AuroraHeaders)
-	header.Set("accept-language", "zh-CN,zh;q=0.9")
+	header.Set("accept", "*/*")
+	header.Set("accept-language", "en-US,en;q=0.9")
+	header.Set("accept-encoding", "gzip, deflate, br")
 	header.Set("content-type", "application/json")
 	header.Set("origin", "https://duckduckgo.com")
 	header.Set("referer", "https://duckduckgo.com/")
-	header.Set("sec-ch-ua", `"Chromium";v="120", "Google Chrome";v="120", "Not-A.Brand";v="99"`)
+	header.Set("sec-ch-ua", `"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"`)
 	header.Set("sec-ch-ua-mobile", "?0")
 	header.Set("sec-ch-ua-platform", `"Windows"`)
 	header.Set("sec-fetch-dest", "empty")
 	header.Set("sec-fetch-mode", "cors")
 	header.Set("sec-fetch-site", "same-origin")
-	header.Set("user-agent", UA)
+	header.Set("cache-control", "no-cache")
+	header.Set("pragma", "no-cache")
+	header.Set("user-agent", getRandomUserAgent())
+	// 添加随机迟延以模拟人类行为
+	time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond)
 	return header
 }
 

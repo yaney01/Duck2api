@@ -40,38 +40,66 @@ func (h *Handler) duckduckgo(c *gin.Context) {
 		}})
 		return
 	}
-	proxyUrl := h.proxy.GetProxyIP()
-	client := bogdanfinn.NewStdClient()
-	token, err := duckgo.InitXVQD(client, proxyUrl)
-	if err != nil {
-		c.JSON(500, gin.H{
-			"error": err.Error(),
-		})
-		return
-	}
 
-	translated_request := duckgoConvert.ConvertAPIRequest(original_request)
-	response, err := duckgo.POSTconversation(client, translated_request, token, proxyUrl)
-	if err != nil {
-		c.JSON(500, gin.H{
-			"error": "request conversion error",
-		})
-		return
-	}
+	// 使用重试机制
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		proxyUrl := h.proxy.GetProxyIP()
+		client := bogdanfinn.NewStdClient()
+		token, err := duckgo.InitXVQD(client, proxyUrl)
+		if err != nil {
+			if attempt == maxRetries-1 {
+				c.JSON(500, gin.H{
+					"error": gin.H{
+						"message": "Failed to initialize DuckDuckGo session after multiple attempts",
+						"type":    "initialization_error",
+						"details": err.Error(),
+					},
+				})
+				return
+			}
+			continue
+		}
 
-	defer response.Body.Close()
-	if duckgo.Handle_request_error(c, response) {
-		return
-	}
-	var response_part string
-	response_part = duckgo.Handler(c, response, translated_request, original_request.Stream)
-	if c.Writer.Status() != 200 {
-		return
-	}
-	if !original_request.Stream {
-		c.JSON(200, officialtypes.NewChatCompletionWithModel(response_part, translated_request.Model))
-	} else {
-		c.String(200, "data: [DONE]\n\n")
+		translated_request := duckgoConvert.ConvertAPIRequest(original_request)
+		response, err := duckgo.POSTconversation(client, translated_request, token, proxyUrl)
+		if err != nil {
+			if attempt == maxRetries-1 {
+				c.JSON(500, gin.H{
+					"error": gin.H{
+						"message": "Failed to complete request after multiple attempts",
+						"type":    "request_error",
+						"details": err.Error(),
+					},
+				})
+				return
+			}
+			continue
+		}
+
+		defer response.Body.Close()
+		if duckgo.Handle_request_error(c, response) {
+			// 如果是403或429错误，尝试重试
+			if response.StatusCode == 403 || response.StatusCode == 429 {
+				if attempt < maxRetries-1 {
+					c.Writer.Reset(c.Writer)
+					continue
+				}
+			}
+			return
+		}
+
+		var response_part string
+		response_part = duckgo.Handler(c, response, translated_request, original_request.Stream)
+		if c.Writer.Status() != 200 {
+			return
+		}
+		if !original_request.Stream {
+			c.JSON(200, officialtypes.NewChatCompletionWithModel(response_part, translated_request.Model))
+		} else {
+			c.String(200, "data: [DONE]\n\n")
+		}
+		return // 成功后退出重试循环
 	}
 }
 

@@ -21,8 +21,9 @@ func NewStdClient() *TlsClient {
 	client, _ := tls_client.NewHttpClient(tls_client.NewNoopLogger(), []tls_client.HttpClientOption{
 		tls_client.WithCookieJar(tls_client.NewCookieJar()),
 		tls_client.WithRandomTLSExtensionOrder(),
-		tls_client.WithTimeoutSeconds(600),
-		tls_client.WithClientProfile(profiles.Okhttp4Android13),
+		tls_client.WithTimeoutSeconds(120),
+		tls_client.WithClientProfile(profiles.Chrome_131),
+		tls_client.WithInsecureSkipVerify(),
 	}...)
 
 	stdClient := &TlsClient{Client: client}
