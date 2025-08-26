@@ -43,24 +43,56 @@ python3 test_duck2api.py
 ```
 
 ### Docker部署
-## Docker部署
-您需要安装Docker和Docker Compose。
 
+> ⚠️ **注意**: 如需使用Docker部署，请先构建自己的镜像或等待GitHub Actions自动构建
+
+#### 使用预构建镜像（推荐）
 ```bash
+# 使用修复版本镜像
 docker run -d \
   --name duck2api \
   -p 8080:8080 \
-  ghcr.io/aurora-develop/duck2api:latest
+  ghcr.io/yaney01/duck2api:latest
 ```
 
-## Docker Compose部署
+#### 本地构建镜像
+```bash
+git clone https://github.com/yaney01/Duck2api
+cd Duck2api
+docker build -t duck2api .
+docker run -d \
+  --name duck2api \
+  -p 8080:8080 \
+  duck2api
+```
+
+#### Docker Compose部署
 创建一个新的目录，例如duck2api，并进入该目录：
 ```bash
 mkdir duck2api
 cd duck2api
 ```
-在此目录中下载库中的docker-compose.yml文件：
 
+创建 `docker-compose.yml` 文件：
+```yaml
+version: '3.8'
+services:
+  duck2api:
+    image: ghcr.io/yaney01/duck2api:latest
+    # 或使用本地构建: build: https://github.com/yaney01/Duck2api.git
+    container_name: duck2api
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      # 可选配置
+      # - Authorization=your_auth_key
+      # - PROXY_URL=http://proxy:port
+    restart: unless-stopped
+```
+
+启动服务：
 ```bash
 docker-compose up -d
 ```

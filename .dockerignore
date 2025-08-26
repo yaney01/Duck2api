@@ -1,0 +1,57 @@
+# Git相关
+.git
+.gitignore
+.gitattributes
+
+# GitHub相关
+.github
+
+# 文档
+README.md
+FIXES.md
+*.md
+LICENSE
+
+# 开发工具
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 测试文件
+*_test.go
+test_*.py
+test_*
+*test*
+
+# 构建产物
+duck2api
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 临时文件
+*.log
+*.tmp
+.env
+.env.local
+.env.*.local
+
+# 脚本文件（除了启动脚本可能需要）
+start.sh
+*.sh
+*.bat
+
+# 依赖缓存
+node_modules
+vendor/
+
+# OS相关
+.DS_Store
+Thumbs.db
+
+# 其他
+docker-compose.yml
+.dockerignore
