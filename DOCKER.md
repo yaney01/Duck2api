@@ -243,7 +243,46 @@ docker logs --tail 100 duck2api
 
 ### 常见问题
 
-1. **容器启动失败**
+1. **镜像不存在错误** (`Unable to find image` 或 `denied`)
+   ```bash
+   # 错误示例:
+   # docker: Error response from daemon: Head "https://ghcr.io/v2/yaney01/duck2api/manifests/latest": denied
+   ```
+   
+   **解决方案:**
+   
+   a) **使用本地构建** (推荐)
+   ```bash
+   # 克隆仓库并构建
+   git clone https://github.com/yaney01/Duck2api.git
+   cd Duck2api
+   
+   # 使用构建脚本
+   ./build-docker.sh
+   
+   # 或手动构建
+   docker build -t duck2api .
+   docker run -d --name duck2api -p 8080:8080 duck2api
+   ```
+   
+   b) **等待GitHub Actions构建**
+   - 访问 [GitHub Actions](https://github.com/yaney01/Duck2api/actions)
+   - 检查构建状态
+   - 可以手动触发构建 (workflow_dispatch)
+   
+   c) **手动推送镜像**
+   ```bash
+   # 登录GHCR (需要GitHub Personal Access Token)
+   docker login ghcr.io
+   # 用户名: 你的GitHub用户名
+   # 密码: ghp_xxxxxxxxxxxx (你的PAT)
+   
+   # 构建并推送
+   docker build -t ghcr.io/yaney01/duck2api:latest .
+   docker push ghcr.io/yaney01/duck2api:latest
+   ```
+
+2. **容器启动失败**
    ```bash
    # 检查日志
    docker logs duck2api
