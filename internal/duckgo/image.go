@@ -19,7 +19,8 @@ type ImageResult struct {
 func ReadImageResponse(response *http.Response) ImageResult {
 	reader := bufio.NewReader(response.Body)
 	var textBuilder strings.Builder
-	var images []duckgotypes.ImagePart
+	var legacyImages []duckgotypes.ImagePart
+	var generatedImages []duckgotypes.ImagePart
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -51,14 +52,14 @@ func ReadImageResponse(response *http.Response) ImageResult {
 		// Extract image from parts (legacy format)
 		for _, part := range apiResp.Parts {
 			if part.Type == "generated-image" || part.Type == "image" {
-				images = append(images, part)
+				legacyImages = append(legacyImages, part)
 			}
 		}
 
 		// Extract image from data field (new format: ui-component with GenerateImage)
 		if apiResp.ToolName == "GenerateImage" && apiResp.Data != nil {
 			if imgData := apiResp.GetImageData(); imgData != nil && imgData.B64Image != "" {
-				images = append(images, duckgotypes.ImagePart{
+				generatedImages = append(generatedImages, duckgotypes.ImagePart{
 					Type:   "generated-image",
 					Result: imgData.B64Image,
 					Format: imgData.Format,
@@ -67,6 +68,11 @@ func ReadImageResponse(response *http.Response) ImageResult {
 				})
 			}
 		}
+	}
+
+	images := generatedImages
+	if len(images) == 0 {
+		images = legacyImages
 	}
 
 	return ImageResult{
