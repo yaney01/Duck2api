@@ -1,7 +1,6 @@
 package official
 
 import (
-	"encoding/base64"
 	"encoding/json"
 )
 
@@ -25,7 +24,7 @@ type ImageEditRequest struct {
 	Model           string `json:"model,omitempty"`
 	N               int    `json:"n,omitempty"`
 	Size            string `json:"size,omitempty"`
-	ResponseFormat  string `json:"response_format,omitempty"` // "url" or "b64_json"
+	ResponseFormat  string `json:"response_format,omitempty"`  // "url" or "b64_json"
 	ReasoningEffort string `json:"reasoning_effort,omitempty"` // "none", "low", "medium", "high"
 }
 
@@ -38,8 +37,8 @@ type ImageData struct {
 
 // ImageGenerationResponse is the OpenAI-compatible response for image endpoints.
 // Duck.ai may return multiple intermediate candidates even when n=1. The custom
-// JSON encoder keeps only the largest valid base64 candidate so clients such as
-// OpenWebUI receive the most complete image instead of an early preview.
+// JSON encoder keeps the last valid base64 candidate because the SSE stream emits
+// legacy preview parts before the final GenerateImage result.
 type ImageGenerationResponse struct {
 	Created int64       `json:"created"`
 	Data    []ImageData `json:"data"`
@@ -49,21 +48,10 @@ func (r ImageGenerationResponse) MarshalJSON() ([]byte, error) {
 	data := r.Data
 	if len(data) > 1 {
 		bestIndex := -1
-		bestSize := -1
-
-		for i, image := range data {
-			if image.B64JSON == "" {
-				continue
-			}
-
-			size := len(image.B64JSON)
-			if decoded, err := base64.StdEncoding.DecodeString(image.B64JSON); err == nil {
-				size = len(decoded)
-			}
-
-			if size > bestSize {
+		for i := len(data) - 1; i >= 0; i-- {
+			if data[i].B64JSON != "" {
 				bestIndex = i
-				bestSize = size
+				break
 			}
 		}
 
