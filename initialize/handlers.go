@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,8 @@ import (
 type Handler struct {
 	proxy *proxys.IProxy
 }
+
+const maxImageEditReferences = 4
 
 func NewHandle(proxy *proxys.IProxy) *Handler {
 	// Wire up file store for file_id resolution in chat
@@ -341,9 +344,8 @@ func (h *Handler) imageEdits(c *gin.Context) {
 		model = "gpt-5.4-nano"
 	}
 
-	// Read image file
-	file, _, err := c.Request.FormFile("image")
-	if err != nil {
+	imageHeaders := c.Request.MultipartForm.File["image"]
+	if len(imageHeaders) == 0 {
 		c.JSON(400, gin.H{"error": gin.H{
 			"message": "image file is required",
 			"type":    "invalid_request_error",
@@ -352,20 +354,38 @@ func (h *Handler) imageEdits(c *gin.Context) {
 		}})
 		return
 	}
-	defer file.Close()
-
-	imageBytes, err := io.ReadAll(file)
-	if err != nil {
-		c.JSON(500, gin.H{"error": gin.H{
-			"message": "Failed to read image file",
-			"type":    "internal_server_error",
-			"code":    err.Error(),
-		}})
-		return
+	if len(imageHeaders) > maxImageEditReferences {
+		imageHeaders = imageHeaders[:maxImageEditReferences]
 	}
 
-	imageB64 := base64.StdEncoding.EncodeToString(imageBytes)
-	h.doImageEdit(c, prompt, model, imageB64, "")
+	imageDataURLs := make([]string, 0, len(imageHeaders))
+	for _, imageHeader := range imageHeaders {
+		file, err := imageHeader.Open()
+		if err != nil {
+			c.JSON(500, gin.H{"error": gin.H{
+				"message": "Failed to open image file",
+				"type":    "internal_server_error",
+				"code":    err.Error(),
+			}})
+			return
+		}
+
+		imageBytes, readErr := io.ReadAll(file)
+		file.Close()
+		if readErr != nil {
+			c.JSON(500, gin.H{"error": gin.H{
+				"message": "Failed to read image file",
+				"type":    "internal_server_error",
+				"code":    readErr.Error(),
+			}})
+			return
+		}
+
+		mimeType := http.DetectContentType(imageBytes)
+		imageDataURLs = append(imageDataURLs, "data:"+mimeType+";base64,"+base64.StdEncoding.EncodeToString(imageBytes))
+	}
+
+	h.doImageEdit(c, prompt, model, imageDataURLs, "")
 }
 
 func (h *Handler) handleImageEditJSON(c *gin.Context, req officialtypes.ImageEditRequest) {
@@ -394,20 +414,56 @@ func (h *Handler) handleImageEditJSON(c *gin.Context, req officialtypes.ImageEdi
 		model = "gpt-5.4-nano"
 	}
 
-	h.doImageEdit(c, req.Prompt, model, req.Image, req.ReasoningEffort)
+	h.doImageEdit(c, req.Prompt, model, []string{req.Image}, req.ReasoningEffort)
 }
 
-func (h *Handler) doImageEdit(c *gin.Context, prompt string, model string, imageB64 string, reasoningEffort string) {
-	// Build the prompt with image context
-	editPrompt := prompt
+func normalizeImageDataURL(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" || strings.HasPrefix(image, "data:") {
+		return image
+	}
 
-	chatReq := officialtypes.APIRequest{
+	mimeType := "image/webp"
+	if imageBytes, err := base64.StdEncoding.DecodeString(image); err == nil {
+		detectedType := http.DetectContentType(imageBytes)
+		if strings.HasPrefix(detectedType, "image/") {
+			mimeType = detectedType
+		}
+	}
+	return "data:" + mimeType + ";base64," + image
+}
+
+func buildImageEditRequest(prompt string, model string, imageDataURLs []string) officialtypes.APIRequest {
+	content := make([]interface{}, 0, 1+len(imageDataURLs))
+	content = append(content, map[string]interface{}{
+		"type": "text",
+		"text": prompt,
+	})
+
+	for _, image := range imageDataURLs {
+		image = normalizeImageDataURL(image)
+		if image == "" {
+			continue
+		}
+		content = append(content, map[string]interface{}{
+			"type": "image_url",
+			"image_url": map[string]interface{}{
+				"url": image,
+			},
+		})
+	}
+
+	return officialtypes.APIRequest{
 		Model: model,
 		Messages: []officialtypes.ApiMessage{
-			{Role: "user", Content: editPrompt},
+			{Role: "user", Content: content},
 		},
 		Stream: false,
 	}
+}
+
+func (h *Handler) doImageEdit(c *gin.Context, prompt string, model string, imageDataURLs []string, reasoningEffort string) {
+	chatReq := buildImageEditRequest(prompt, model, imageDataURLs)
 
 	proxyUrl := h.proxy.GetProxyIP()
 	client := bogdanfinn.NewStdClient()
