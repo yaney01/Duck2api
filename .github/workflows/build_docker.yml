@@ -1,4 +1,4 @@
-name: Build Docker Image
+name: Build and Publish Docker Image
 
 on:
   push:
@@ -13,10 +13,26 @@ permissions:
   packages: write
 
 env:
-  GHCR_REPO: ghcr.io/aurora-develop/duck2api
+  GHCR_REPO: ghcr.io/yaney01/duck2api
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
   docker:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -42,7 +58,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push to GHCR
         uses: docker/build-push-action@v6
