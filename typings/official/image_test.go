@@ -6,15 +6,16 @@ import (
 	"testing"
 )
 
-func TestImageGenerationResponseSelectsLargestCandidate(t *testing.T) {
-	small := base64.StdEncoding.EncodeToString([]byte("small"))
-	large := base64.StdEncoding.EncodeToString([]byte("this candidate is larger"))
+func TestImageGenerationResponseSelectsLastValidCandidate(t *testing.T) {
+	preview := base64.StdEncoding.EncodeToString([]byte("this preview is intentionally larger"))
+	final := base64.StdEncoding.EncodeToString([]byte("final"))
 
 	payload, err := json.Marshal(ImageGenerationResponse{
 		Created: 1,
 		Data: []ImageData{
-			{B64JSON: small, RevisedPrompt: "small"},
-			{B64JSON: large, RevisedPrompt: "large"},
+			{B64JSON: preview, RevisedPrompt: "legacy preview"},
+			{B64JSON: final, RevisedPrompt: "final GenerateImage result"},
+			{RevisedPrompt: "empty trailing event"},
 		},
 	})
 	if err != nil {
@@ -31,8 +32,8 @@ func TestImageGenerationResponseSelectsLargestCandidate(t *testing.T) {
 	if len(decoded.Data) != 1 {
 		t.Fatalf("expected 1 image, got %d", len(decoded.Data))
 	}
-	if decoded.Data[0].B64JSON != large {
-		t.Fatal("did not select the largest candidate")
+	if decoded.Data[0].B64JSON != final {
+		t.Fatal("did not select the last valid candidate")
 	}
 }
 
