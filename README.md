@@ -1,205 +1,228 @@
-# Duck2API
+# Duck2API（Yaney Fork）
 
-DuckDuckGo AI Chat 转 OpenAI 兼容 API 代理。支持 Chat Completions、图像生成/编辑、文件上传问答、语音转文字、文字转语音、推理模式、网络搜索等完整功能。
-## 接口文档
+将 DuckDuckGo AI Chat 转换为 OpenAI 兼容 API，支持 Chat Completions、Responses API、图像生成/编辑、文件问答、语音转文字、文字转语音、推理模式和网络搜索。
 
-curl 示例请查看：[API.md](API.md)
+本仓库基于 [`aurora-develop/duck2api`](https://github.com/aurora-develop/duck2api) 维护，当前分支增加了图像候选筛选：当 Duck.ai 返回多张中间候选时，API 会自动选择解码后文件体积最大的有效图片，仅向客户端返回一张，避免 OpenWebUI 误取低质量预览图。
 
-## 部署
+## 本 Fork 的改动
 
-### 编译部署
+- 图像生成和图片编辑响应自动选择体积最大的 Base64 候选图。
+- Docker 镜像发布到 `ghcr.io/yaney01/duck2api`。
+- GitHub Actions 使用仓库自带的 `GITHUB_TOKEN` 构建并发布多架构镜像。
+- 支持 `linux/amd64` 和 `linux/arm64`。
 
-```bash
-git clone https://github.com/aurora-develop/duck2api
-cd duck2api
-go build -o duck2api
-chmod +x ./duck2api
-./duck2api
-```
+## 接口概览
 
-### Docker 部署
+| 功能 | 端点 | 说明 |
+|---|---|---|
+| Chat Completions | `POST /v1/chat/completions` | 流式/非流式对话 |
+| Responses API | `POST /v1/responses` | OpenAI Responses API |
+| 图像生成 | `POST /v1/images/generations` | 文生图，自动筛选最大候选 |
+| 图像编辑 | `POST /v1/images/edits` | 图生图/改图，自动筛选最大候选 |
+| 文件上传 | `POST /v1/files` | 上传文件用于问答 |
+| 文件管理 | `GET/DELETE /v1/files/:id` | 查询、下载和删除文件 |
+| 语音转文字 | `POST /v1/audio/transcriptions` | Whisper 兼容接口 |
+| 文字转语音 | `POST /v1/audio/speech` | TTS 接口 |
+| 模型列表 | `GET /v1/models` | 列出可用模型 |
+
+完整 curl 示例见 [API.md](API.md)。
+
+## Docker 部署
 
 ```bash
 docker run -d \
   --name duck2api \
+  --restart unless-stopped \
   -p 8080:8080 \
-  ghcr.io/aurora-develop/duck2api:latest
+  ghcr.io/yaney01/duck2api:latest
 ```
 
-### Docker Compose 部署
+验证服务：
 
 ```bash
-mkdir duck2api && cd duck2api
-wget https://raw.githubusercontent.com/aurora-develop/duck2api/main/docker-compose.yml
-docker-compose up -d
+curl http://127.0.0.1:8080/ping
+curl http://127.0.0.1:8080/v1/models
 ```
 
-## 功能概览
-
-| 功能 | 端点 | 说明 |
-|------|------|------|
-| Chat Completions | `POST /v1/chat/completions` | 流式/非流式对话 |
-| Responses API | `POST /v1/responses` | OpenAI Responses API |
-| 图像生成 | `POST /v1/images/generations` | 文生图 |
-| 图像编辑 | `POST /v1/images/edits` | 图生图/改图 |
-| 文件上传 | `POST /v1/files` | 上传文件用于问答 |
-| 文件管理 | `GET/DELETE /v1/files/:id` | 查询/删除文件 |
-| 语音转文字 | `POST /v1/audio/transcriptions` | Whisper 兼容接口 |
-| 文字转语音 | `POST /v1/audio/speech` | TTS 接口，支持 MP3/WAV/OGG |
-| 模型列表 | `GET /v1/models` | 列出可用模型 |
-
-## 快速开始
-
-### 基础对话
+更新镜像：
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "你好"}],
-    "stream": true
-  }'
+docker pull ghcr.io/yaney01/duck2api:latest
+docker rm -f duck2api
+
+docker run -d \
+  --name duck2api \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  ghcr.io/yaney01/duck2api:latest
 ```
 
-### 推理模式 (Reasoning)
+> GHCR 第一次构建后如果镜像仍是 Private，需要在 GitHub 仓库的 Packages 页面将 `duck2api` 包可见性改为 Public，或者先执行 `docker login ghcr.io` 后再拉取。
 
-使用 `reasoning_effort` 参数控制推理深度：
+## Docker Compose 部署
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
+mkdir -p duck2api && cd duck2api
+curl -O https://raw.githubusercontent.com/yaney01/Duck2api/main/docker-compose.yml
+docker compose up -d
+```
+
+更新：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+`docker-compose.yml` 默认使用：
+
+```text
+ghcr.io/yaney01/duck2api:latest
+```
+
+## 源码编译
+
+要求 Go 版本与 `go.mod` 一致。
+
+```bash
+git clone https://github.com/yaney01/Duck2api.git
+cd Duck2api
+go mod download
+go test ./...
+go build -o duck2api .
+chmod +x ./duck2api
+./duck2api
+```
+
+默认监听：
+
+```text
+0.0.0.0:8080
+```
+
+修改端口：
+
+```bash
+SERVER_PORT=8081 ./duck2api
+```
+
+## OpenWebUI 配置
+
+OpenWebUI 使用 Docker 部署时，API Base URL 填写：
+
+```text
+http://host.docker.internal:8080/v1
+```
+
+OpenWebUI 和 Duck2API 位于同一个 Docker Compose 网络时，可填写：
+
+```text
+http://duck2api:8080/v1
+```
+
+OpenWebUI 直接运行在本机时，可填写：
+
+```text
+http://127.0.0.1:8080/v1
+```
+
+没有设置 `Authorization` 环境变量时，OpenWebUI 的 API Key 字段可填写任意非空字符串，例如：
+
+```text
+duck2api
+```
+
+## 图像生成
+
+```bash
+curl http://127.0.0.1:8080/v1/images/generations \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-5.4-mini",
-    "messages": [{"role": "user", "content": "证明勾股定理"}],
+    "prompt": "一张高质量商业摄影作品",
+    "n": 1,
+    "reasoning_effort": "high",
+    "response_format": "b64_json"
+  }'
+```
+
+### 候选图筛选逻辑
+
+Duck.ai 可能在一次请求中返回多张候选，即使请求参数是 `n: 1`。本 Fork 在序列化图像响应时执行以下逻辑：
+
+1. 读取所有有效的 `b64_json` 候选。
+2. 解码 Base64，并按真实图片字节数比较。
+3. Base64 解码失败时，回退为比较字符串长度。
+4. 仅返回体积最大的候选。
+5. 如果上游只返回一张图，则保持原响应不变。
+
+该规则用于过滤常见的低质量中间预览图。文件体积不能在所有情况下等同于视觉质量，但对当前 Duck.ai 返回的“第一张预览、第二张完整图”问题有效。
+
+## 图像编辑
+
+JSON Base64：
+
+```bash
+curl http://127.0.0.1:8080/v1/images/edits \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "<base64编码图片>",
+    "prompt": "仅修改指定内容，保持其余部分不变",
+    "model": "gpt-5.4-mini",
     "reasoning_effort": "high"
   }'
 ```
 
-支持的值：`none`（快速）、`low`、`medium`、`high`
-
-### 网络搜索
-
-设置 `web_search: true` 启用联网搜索：
+文件上传：
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.4-nano",
-    "messages": [{"role": "user", "content": "今天的科技新闻"}],
-    "web_search": true
-  }'
+curl http://127.0.0.1:8080/v1/images/edits \
+  -F "image=@input.png" \
+  -F "prompt=仅修改指定内容，保持其余部分不变" \
+  -F "model=gpt-5.4-mini"
 ```
-
-### 图像生成
-
-```bash
-curl http://localhost:8080/v1/images/generations \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "一只可爱的猫咪坐在窗台上",
-    "model": "gpt-5.4-nano"
-  }'
-```
-
-### 图像编辑
-
-```bash
-# JSON 方式 (base64)
-curl http://localhost:8080/v1/images/edits \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image": "<base64编码的图片>",
-    "prompt": "把猫改成蓝色"
-  }'
-
-# 文件上传方式
-curl http://localhost:8080/v1/images/edits \
-  -F "image=@cat.png" \
-  -F "prompt=把猫改成蓝色"
-```
-
-### 文件上传与问答
-
-```bash
-# 1. 上传文件
-curl http://localhost:8080/v1/files \
-  -F "file=@document.pdf" \
-  -F "purpose=assistants"
-
-# 返回: {"id": "file-xxx", "object": "file", ...}
-
-# 2. 使用文件进行问答（将文件内容作为上下文）
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.4-nano",
-    "messages": [{"role": "user", "content": "请总结这个文档"}],
-    "file_ids": ["file-xxx"]
-  }'
-```
-
-### 语音转文字
-
-```bash
-curl http://localhost:8080/v1/audio/transcriptions \
-  -F "file=@audio.webm" \
-  -F "model=whisper-1"
-```
-
-支持格式：webm、ogg、mp3、wav、m4a、flac、opus、aac
-
-### 文字转语音
-
-```bash
-curl http://localhost:8080/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{"model":"tts-1","input":"你好世界","voice":"alloy","response_format":"mp3"}' \
-  --output speech.mp3
-```
-
-支持格式：mp3、wav、ogg、flac、aac（底层使用 Duck.ai 的 WebRTC + OpenAI Realtime API）
 
 ## 支持的模型
 
-| 模型 | 类型 | 说明 |
-|------|------|------|
-| `gpt-5.4-nano` | 推理 | OpenAI 最新轻量推理模型 |
-| `gpt-5.4-mini` | 推理 | OpenAI 推理模型 |
-| `claude-haiku-4-5` | 通用 | Anthropic Claude |
-| `tinfoil/gpt-oss-120b` | 通用 | OpenAI GPT-1.5 120B |
-| `mistral-small` | 通用 | Mistral AI |
+以 `/v1/models` 实时返回为准。当前包含：
 
-## 高级设置
+- `gpt-5.4-mini`
+- `gpt-5.4-nano`
+- `tinfoil/gpt-oss-120b`
+- `claude-haiku-4-5`
+- `mistral-small`
 
-### 环境变量
+## 环境变量
 
 | 变量 | 说明 | 示例 |
-|------|------|------|
+|---|---|---|
 | `Authorization` | API 认证 Key | `Bearer your_key` |
+| `SERVER_HOST` | 监听地址 | `0.0.0.0` |
+| `SERVER_PORT` | 监听端口 | `8080` |
 | `PROXY_URL` | 代理地址 | `http://proxy:8080` |
 | `PREFIX` | URL 前缀 | `/api` |
 | `TLS_CERT` | TLS 证书路径 | `/path/to/cert.pem` |
-| `TLS_KEY` | TLS 密钥路径 | `/path/to/key.pem` |
+| `TLS_KEY` | TLS 私钥路径 | `/path/to/key.pem` |
 
-### 代理池
+## GitHub Actions 与镜像标签
 
-支持 `proxies.txt` 文件配置多个代理（每行一个）：
+推送到 `main` 后，`.github/workflows/build_docker.yml` 会先运行：
 
-```
-http://proxy1:8080
-http://proxy2:8080
-socks5://proxy3:1080
+```bash
+go test ./...
 ```
 
-## 鸣谢
+测试通过后构建并发布：
 
-感谢各位大佬的 PR 支持。
+- `ghcr.io/yaney01/duck2api:latest`
+- `ghcr.io/yaney01/duck2api:<VERSION>`
+- `ghcr.io/yaney01/duck2api:v<VERSION>`
+- `ghcr.io/yaney01/duck2api:<commit-sha前12位>`
 
-## 参考项目
+## 上游与致谢
 
-- https://github.com/xqdoo00o/ChatGPT-to-API
+- 上游项目：[`aurora-develop/duck2api`](https://github.com/aurora-develop/duck2api)
+- 参考项目：[`xqdoo00o/ChatGPT-to-API`](https://github.com/xqdoo00o/ChatGPT-to-API)
 
 ## License
 
