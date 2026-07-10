@@ -1,4 +1,4 @@
-# 使用 Go 1.25 官方镜像作为构建环境
+# 使用 Go 1.26 官方镜像作为构建环境
 FROM golang:1.26 AS builder
 
 # 禁用 CGO
@@ -17,6 +17,10 @@ RUN go build -ldflags "-s -w" -o /app/duck2api .
 
 # 使用 Alpine Linux 作为最终镜像
 FROM alpine:latest
+
+LABEL org.opencontainers.image.source="https://github.com/yaney01/Duck2api" \
+      org.opencontainers.image.description="DuckDuckGo AI Chat to OpenAI-compatible API proxy" \
+      org.opencontainers.image.licenses="MIT"
 
 # 设置工作目录
 WORKDIR /app
