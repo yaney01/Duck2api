@@ -2,11 +2,11 @@
 
 将 DuckDuckGo AI Chat 转换为 OpenAI 兼容 API，支持 Chat Completions、Responses API、图像生成/编辑、文件问答、语音转文字、文字转语音、推理模式和网络搜索。
 
-本仓库基于 [`aurora-develop/duck2api`](https://github.com/aurora-develop/duck2api) 维护，当前分支增加了图像候选筛选：当 Duck.ai 返回多张中间候选时，API 会自动选择解码后文件体积最大的有效图片，仅向客户端返回一张，避免 OpenWebUI 误取低质量预览图。
+本仓库基于 [`aurora-develop/duck2api`](https://github.com/aurora-develop/duck2api) 维护，当前分支增加了图像候选筛选：当 Duck.ai 同时返回旧格式预览和新格式 `GenerateImage` 结果时，API 会优先采用最终 `GenerateImage` 结果，仅向客户端返回一张，避免误取低质量预览图。
 
 ## 本 Fork 的改动
 
-- 图像生成和图片编辑响应自动选择体积最大的 Base64 候选图。
+- 图像生成和图片编辑响应优先采用最终 `GenerateImage` 结果，并选择最后一个有效候选。
 - Docker 镜像发布到 `ghcr.io/yaney01/duck2api`。
 - GitHub Actions 使用仓库自带的 `GITHUB_TOKEN` 构建并发布多架构镜像。
 - 支持 `linux/amd64` 和 `linux/arm64`。
@@ -17,8 +17,8 @@
 |---|---|---|
 | Chat Completions | `POST /v1/chat/completions` | 流式/非流式对话 |
 | Responses API | `POST /v1/responses` | OpenAI Responses API |
-| 图像生成 | `POST /v1/images/generations` | 文生图，自动筛选最大候选 |
-| 图像编辑 | `POST /v1/images/edits` | 图生图/改图，自动筛选最大候选 |
+| 图像生成 | `POST /v1/images/generations` | 文生图，自动选择最终候选 |
+| 图像编辑 | `POST /v1/images/edits` | 图生图/改图，自动选择最终候选 |
 | 文件上传 | `POST /v1/files` | 上传文件用于问答 |
 | 文件管理 | `GET/DELETE /v1/files/:id` | 查询、下载和删除文件 |
 | 语音转文字 | `POST /v1/audio/transcriptions` | Whisper 兼容接口 |
@@ -150,13 +150,12 @@ curl http://127.0.0.1:8080/v1/images/generations \
 
 Duck.ai 可能在一次请求中返回多张候选，即使请求参数是 `n: 1`。本 Fork 在序列化图像响应时执行以下逻辑：
 
-1. 读取所有有效的 `b64_json` 候选。
-2. 解码 Base64，并按真实图片字节数比较。
-3. Base64 解码失败时，回退为比较字符串长度。
-4. 仅返回体积最大的候选。
-5. 如果上游只返回一张图，则保持原响应不变。
+1. 分别收集旧格式 `parts` 预览和新格式 `GenerateImage` 结果。
+2. 只要存在 `GenerateImage` 结果，就忽略全部旧格式预览；没有时才回退到旧格式。
+3. 同一结果类型出现多次时，从后向前选择最后一个非空候选。
+4. 仅向客户端返回这个最终候选；如果上游只返回一张图，则保持原响应不变。
 
-该规则用于过滤常见的低质量中间预览图。文件体积不能在所有情况下等同于视觉质量，但对当前 Duck.ai 返回的“第一张预览、第二张完整图”问题有效。
+该规则用于过滤旧格式事件中的低质量中间预览图。不能使用文件体积判断视觉质量，因为预览图可能比最终图包含更多压缩噪声，反而拥有更大的文件体积。
 
 ## 图像编辑
 
