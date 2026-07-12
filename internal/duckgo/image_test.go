@@ -64,3 +64,17 @@ func TestReadImageResponsePrefersLargerPayloadWithoutMetadata(t *testing.T) {
 		t.Fatalf("expected larger decoded payload, got %#v", result.Images)
 	}
 }
+
+func TestReadImageResponseRejectsPartialOnlyResult(t *testing.T) {
+	preview := testBase64("blurred partial preview")
+	body := strings.Join([]string{
+		`data: {"action":"success","state":"data","toolName":"GenerateImage","data":{"b64Image":"` + preview + `","status":"partial","type":"image-partial","format":"jpeg","width":1024,"height":1536}}`,
+		`data: {"action":"success","state":"result","result":"Image generation failed: The image could not be generated due to content policy."}`,
+		`data: {"action":"success","state":"data","toolName":"GenerateImage","data":{"status":"error","error":"content_policy","message":"The image could not be generated due to content policy."}}`,
+		"data: [DONE]", "",
+	}, "\n")
+	result := ReadImageResponse(&http.Response{Body: io.NopCloser(strings.NewReader(body))})
+	if len(result.Images) != 0 {
+		t.Fatalf("expected partial-only generation to be rejected, got %#v", result.Images)
+	}
+}
