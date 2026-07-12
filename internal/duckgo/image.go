@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -114,9 +115,10 @@ func imageCandidates(apiResp duckgotypes.ApiResponse, eventIndex int) []imageCan
 
 	if apiResp.ToolName == "GenerateImage" || len(apiResp.Parts) > 0 || apiResp.Result != "" {
 		log.Printf(
-			"[IMAGE_EVENT] event=%d action=%q tool=%q toolCallId=%s state=%q name=%q parts=%d dataBytes=%d resultBytes=%d",
+			"[IMAGE_EVENT] event=%d action=%q tool=%q toolCallId=%s state=%q name=%q parts=%d dataBytes=%d resultBytes=%d data=%q result=%q",
 			eventIndex, apiResp.Action, apiResp.ToolName, apiResp.ToolCallId,
 			apiResp.State, apiResp.Name, len(apiResp.Parts), len(apiResp.Data), len(apiResp.Result),
+			payloadSummary(apiResp.Data), payloadSummary([]byte(apiResp.Result)),
 		)
 	}
 
@@ -180,6 +182,17 @@ func imageCandidates(apiResp duckgotypes.ApiResponse, eventIndex int) []imageCan
 	}
 
 	return candidates
+}
+
+func payloadSummary(value []byte) string {
+	trimmed := strings.TrimSpace(string(value))
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) > 1024 {
+		return fmt.Sprintf("<%d bytes omitted>", len(trimmed))
+	}
+	return trimmed
 }
 
 func finalizeCandidate(candidate imageCandidate) imageCandidate {
