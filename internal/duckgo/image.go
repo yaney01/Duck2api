@@ -229,6 +229,19 @@ func selectBestImageCandidate(candidates []imageCandidate) (imageCandidate, bool
 		}
 	}
 	best := candidates[bestIndex]
+
+	// A candidate explicitly marked partial/preview is never a completed image.
+	// Returning it after an upstream policy error or interrupted generation is
+	// what caused blurry images to be exposed as successful API responses.
+	if best.Score < 0 {
+		log.Printf(
+			"[IMAGE] rejected_partial=%d event=%d source=%s toolCallId=%s bytes=%d sha256=%s score=%d",
+			bestIndex, best.EventIndex, best.Source, best.ToolCallID,
+			best.ByteSize, best.Hash, best.Score,
+		)
+		return imageCandidate{}, false
+	}
+
 	log.Printf(
 		"[IMAGE] selected=%d event=%d action=%q source=%s toolCallId=%s bytes=%d sha256=%s score=%d",
 		bestIndex, best.EventIndex, best.Action, best.Source, best.ToolCallID,
