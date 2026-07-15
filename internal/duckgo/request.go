@@ -22,9 +22,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	duckDuckGoBaseURL      = "https://duckduckgo.com"
+	duckDuckGoStatusURL    = duckDuckGoBaseURL + "/duckchat/v1/status"
+	duckDuckGoChatURL      = duckDuckGoBaseURL + "/duckchat/v1/chat"
+	duckDuckGoAuthTokenURL = duckDuckGoBaseURL + "/duckchat/v1/auth/token"
+	duckDuckGoChatEntryURL = duckDuckGoBaseURL + "/?q=DuckDuckGo+AI+Chat&ia=chat&duckai=1"
+)
+
 var (
-	Token     *XqdgToken
-	FEVersion *XqdgToken
+	Token     = &XqdgToken{}
+	FEVersion = &XqdgToken{}
 	UA        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 )
 
@@ -35,32 +43,57 @@ type XqdgToken struct {
 }
 
 func InitXVQD(client httpclient.AuroraHttpClient, proxyUrl string) (string, error) {
-	if Token == nil {
-		Token = &XqdgToken{
-			Token: "",
-			M:     sync.Mutex{},
-		}
+	// VQD tokens are bound to the current anonymous browser session. Every handler
+	// creates a fresh HTTP client and cookie jar, so reusing a process-global token
+	// makes the token/cookie pair inconsistent and DuckDuckGo rejects it with 418.
+	warmDuckDuckGoSession(client, proxyUrl)
+
+	status, err := postStatus(client, proxyUrl)
+	if err != nil {
+		return "", err
 	}
-	Token.M.Lock()
-	defer Token.M.Unlock()
-	if Token.Token == "" {
-		status, err := postStatus(client, proxyUrl)
-		if err != nil {
-			return "", err
-		}
-		defer status.Body.Close()
-		vqdHash := status.Header.Get("x-vqd-hash-1")
-		if vqdHash == "" {
-			return "", errors.New("no x-vqd-hash-1 token")
-		}
-		token, err := GenerateVQDHash(vqdHash)
-		if err != nil {
-			return "", err
-		}
-		Token.Token = token
+	defer status.Body.Close()
+	if status.StatusCode != http.StatusOK {
+		return "", ReadResponseError(status)
 	}
 
-	return Token.Token, nil
+	vqdHash := status.Header.Get("x-vqd-hash-1")
+	if vqdHash == "" {
+		return "", errors.New("no x-vqd-hash-1 token")
+	}
+	token, err := GenerateVQDHash(vqdHash)
+	if err != nil {
+		return "", err
+	}
+	Token.M.Lock()
+	Token.Token = token
+	Token.M.Unlock()
+	return token, nil
+}
+
+func warmDuckDuckGoSession(client httpclient.AuroraHttpClient, proxyUrl string) {
+	if proxyUrl != "" {
+		_ = client.SetProxy(proxyUrl)
+	}
+
+	// These requests mirror the current web client bootstrap and, importantly,
+	// populate the client's cookie jar before the status/challenge request.
+	if response, err := client.Request(httpclient.GET, duckDuckGoChatEntryURL, createNavigationHeader(), nil, nil); err == nil {
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr == nil {
+			if version, versionErr := extractFEVersion(body); versionErr == nil {
+				cacheFEVersion(version)
+			}
+		}
+	}
+
+	header := createHeader()
+	header.Set("accept", "*/*")
+	if response, err := client.Request(httpclient.GET, duckDuckGoAuthTokenURL, header, nil, nil); err == nil {
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+	}
 }
 
 func postStatus(client httpclient.AuroraHttpClient, proxyUrl string) (*http.Response, error) {
@@ -70,7 +103,7 @@ func postStatus(client httpclient.AuroraHttpClient, proxyUrl string) (*http.Resp
 	header := createHeader()
 	header.Set("accept", "*/*")
 	header.Set("x-vqd-accept", "1")
-	response, err := client.Request(httpclient.GET, "https://duck.ai/duckchat/v1/status", header, nil, nil)
+	response, err := client.Request(httpclient.GET, duckDuckGoStatusURL, header, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -138,9 +171,11 @@ func Handle_request_error(c *gin.Context, response *http.Response) bool {
 func createHeader() httpclient.AuroraHeaders {
 	header := make(httpclient.AuroraHeaders)
 	header.Set("accept-language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7")
+	header.Set("cache-control", "no-cache")
 	header.Set("content-type", "application/json")
-	header.Set("origin", "https://duck.ai")
-	header.Set("referer", "https://duck.ai/")
+	header.Set("origin", duckDuckGoBaseURL)
+	header.Set("pragma", "no-cache")
+	header.Set("referer", duckDuckGoBaseURL+"/")
 	header.Set("sec-ch-ua", `"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"`)
 	header.Set("sec-ch-ua-mobile", "?0")
 	header.Set("sec-ch-ua-platform", `"Windows"`)
@@ -148,6 +183,16 @@ func createHeader() httpclient.AuroraHeaders {
 	header.Set("sec-fetch-mode", "cors")
 	header.Set("sec-fetch-site", "same-origin")
 	header.Set("user-agent", UA)
+	return header
+}
+
+func createNavigationHeader() httpclient.AuroraHeaders {
+	header := createHeader()
+	header.Set("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	header.Set("sec-fetch-dest", "document")
+	header.Set("sec-fetch-mode", "navigate")
+	header.Set("sec-fetch-site", "none")
+	header.Set("upgrade-insecure-requests", "1")
 	return header
 }
 
@@ -165,16 +210,10 @@ func postConversationOnce(client httpclient.AuroraHttpClient, request duckgotype
 		header.Set("x-fe-version", feVersion)
 	}
 	header.Set("x-vqd-hash-1", token)
-	return client.Request(httpclient.POST, "https://duck.ai/duckchat/v1/chat", header, nil, bytes.NewBuffer(bodyJSON))
+	return client.Request(httpclient.POST, duckDuckGoChatURL, header, nil, bytes.NewBuffer(bodyJSON))
 }
 
 func InitFEVersion(client httpclient.AuroraHttpClient, proxyUrl string) (string, error) {
-	if FEVersion == nil {
-		FEVersion = &XqdgToken{
-			Token: "",
-			M:     sync.Mutex{},
-		}
-	}
 	FEVersion.M.Lock()
 	defer FEVersion.M.Unlock()
 	if FEVersion.Token != "" && FEVersion.ExpireAt.After(time.Now()) {
@@ -182,11 +221,9 @@ func InitFEVersion(client httpclient.AuroraHttpClient, proxyUrl string) (string,
 	}
 
 	if proxyUrl != "" {
-		client.SetProxy(proxyUrl)
+		_ = client.SetProxy(proxyUrl)
 	}
-	header := createHeader()
-	header.Set("accept", "text/html")
-	response, err := client.Request(httpclient.GET, "https://duck.ai/", header, nil, nil)
+	response, err := client.Request(httpclient.GET, duckDuckGoChatEntryURL, createNavigationHeader(), nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -196,37 +233,79 @@ func InitFEVersion(client httpclient.AuroraHttpClient, proxyUrl string) (string,
 	if err != nil {
 		return "", err
 	}
-	versionTagMatch := regexp.MustCompile(`data-version-tag="([^"]+)"`).FindSubmatch(body)
-	versionShaMatch := regexp.MustCompile(`data-version-sha="([^"]+)"`).FindSubmatch(body)
-	if len(versionTagMatch) < 2 || len(versionShaMatch) < 2 {
-		return "", errors.New("duck.ai version metadata not found")
+	version, err := extractFEVersion(body)
+	if err != nil {
+		return "", err
 	}
 
-	FEVersion.Token = fmt.Sprintf("%s-%s", versionTagMatch[1], versionShaMatch[1])
+	FEVersion.Token = version
 	FEVersion.ExpireAt = time.Now().Add(30 * time.Minute)
 	return FEVersion.Token, nil
 }
 
+func cacheFEVersion(version string) {
+	if version == "" {
+		return
+	}
+	FEVersion.M.Lock()
+	defer FEVersion.M.Unlock()
+	FEVersion.Token = version
+	FEVersion.ExpireAt = time.Now().Add(30 * time.Minute)
+}
+
+func extractFEVersion(body []byte) (string, error) {
+	// Current DuckDuckGo search/chat page markers.
+	beVersion := regexp.MustCompile(`__DDG_BE_VERSION__=["']([^"']+)["']`).FindSubmatch(body)
+	chatHash := regexp.MustCompile(`__DDG_FE_CHAT_HASH__=["']([^"']+)["']`).FindSubmatch(body)
+	if len(beVersion) >= 2 && len(chatHash) >= 2 {
+		return fmt.Sprintf("%s-%s", beVersion[1], chatHash[1]), nil
+	}
+
+	// Some page variants expose the complete version as a single token.
+	if version := regexp.MustCompile(`serp_\d{8}_\d{6}_[A-Z]{2}-[0-9a-f]{20,40}`).Find(body); len(version) > 0 {
+		return string(version), nil
+	}
+
+	// Backward compatibility with the older duck.ai page markup.
+	versionTag := regexp.MustCompile(`data-version-tag="([^"]+)"`).FindSubmatch(body)
+	versionSHA := regexp.MustCompile(`data-version-sha="([^"]+)"`).FindSubmatch(body)
+	if len(versionTag) >= 2 && len(versionSHA) >= 2 {
+		return fmt.Sprintf("%s-%s", versionTag[1], versionSHA[1]), nil
+	}
+
+	return "", errors.New("DuckDuckGo frontend version metadata not found")
+}
+
 func CreateFESignals() string {
+	// Keep this event sequence aligned with the current DuckDuckGo web client.
+	// The old onboarding/action/startNewChat_free payload is rejected as an
+	// invalid anonymous-browser session and surfaces as HTTP 418.
 	now := time.Now().UnixMilli()
-	// Reproduce the event log the duck.ai frontend records between page load
-	// request): onboarding_impression -> action -> onboarding_finish -> startNewChat_free.
-	// 模拟真实用户行为: 页面加载 -> 用户思考输入 -> 完成输入 -> 点击发送
-	// 时间间隔调整为更接近真实用户的行为模式
-	impression := 50 + randInt63n(100)              // 50-150ms (页面加载完成)
-	action := impression + 5000 + randInt63n(25000) // 5-30秒 (用户阅读并思考)
-	finish := action + 1000 + randInt63n(9000)      // 1-10秒 (输入问题)
-	startChat := finish + 10 + randInt63n(90)       // 10-100ms (点击发送按钮)
-	end := startChat + randInt63n(10)
+	delta := int64(80) + randInt63n(101)
+	events := []map[string]interface{}{
+		{"name": "onboarding_impression_1", "delta": delta},
+	}
+	delta += 120 + randInt63n(141)
+	events = append(events, map[string]interface{}{"name": "onboarding_impression_2", "delta": delta})
+	delta += 200 + randInt63n(301)
+	events = append(events, map[string]interface{}{"name": "startNewChat", "delta": delta})
+
+	keyEvents := 6 + int(randInt63n(13))
+	for i := 0; i < keyEvents; i++ {
+		delta += 40 + randInt63n(141)
+		events = append(events, map[string]interface{}{"name": "user_input", "delta": delta})
+	}
+	delta += 120 + randInt63n(231)
+	events = append(events, map[string]interface{}{"name": "user_submit", "delta": delta})
+
+	end := delta + 20 + randInt63n(71)
+	if end < 3000 {
+		end = 3000
+	}
 	payload := map[string]interface{}{
-		"start": now - end,
-		"events": []map[string]interface{}{
-			{"name": "onboarding_impression", "delta": impression},
-			{"name": "action", "delta": action, "trusted": true},
-			{"name": "onboarding_finish", "delta": finish},
-			{"name": "startNewChat_free", "delta": startChat},
-		},
-		"end": end,
+		"start":  now - 3000,
+		"events": events,
+		"end":    end,
 	}
 	body, _ := json.Marshal(payload)
 	return base64.StdEncoding.EncodeToString(body)
